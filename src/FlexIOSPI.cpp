@@ -227,7 +227,7 @@ void FlexIOSPI::beginTransaction(FlexIOSPISettings settings) {
     if ((settings._clock != _clock) || (settings._dataMode != _dataMode) || (settings._nTransferBits != _nTransferBits)) {
         _clock = settings._clock;
         _dataMode = settings._dataMode;
-        _nTransferBits = settings._nTransferBits; // Probaby should have some safety checking to keep this in the 1-32 range for now.
+        _nTransferBits = settings._nTransferBits; // Probably should have some safety checking to keep this in the 1-32 range for now.
         _nTransferBytes = (_nTransferBits - 1) / 8 + 1;
         if (_nTransferBytes == 3)
             _nTransferBytes = 4;                               // DMA doesn't handle arbitrary pointer shifts so force 32bit alignment even though it would fit into 24bits.
@@ -423,7 +423,7 @@ bool FlexIOSPI::call_back(FlexIOHandler *pflex) {
 //=========================================================================
 // Try Transfer using DMA.
 //=========================================================================
-static uint8_t bit_bucket;
+//volatile FlexIOSPI::bitBucket bit_bucket;
 #define dontInterruptAtCompletion(dmac) (dmac)->TCD->CSR &= ~DMA_TCD_CSR_INTMAJOR
 
 //=========================================================================
@@ -484,7 +484,9 @@ void dumpDMA_TCD(DMABaseClass *dmabc) {
 }
 #endif
 
-bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count, EventResponderRef event_responder) {
+bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count, 
+                         int width, // 1, 2, 4 bytes or 8, 16, 32 bits
+                         EventResponderRef event_responder) {
     if (_dma_state == DMAState::notAllocated) {
         if (!initDMAChannels())
             return false;
@@ -494,14 +496,21 @@ bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count, EventRespo
         return false; // already active
 
     event_responder.clearEvent(); // Make sure it is not set yet
+    if (width > 4) width /= 8; // force width to bytes
+
     if (count < 2) {
         // Use non-async version to simplify cases...
-        transfer(buf, retbuf, count);
+        switch (width)
+        {
+            default: transfer(buf, retbuf, count); break;
+            case  2: transferBufferNBits(buf, retbuf, count, 16); break;
+            case  4: transferBufferNBits(buf, retbuf, count, 32); break;
+        }
         event_responder.triggerEvent();
         return true;
     }
 
-    // Now handle the cases where the count > then how many we can output in one DMA request
+    // Now handle the cases where the count > than how many we can output in one DMA request
     if (count > MAX_DMA_COUNT) {
         _dma_count_remaining = count - MAX_DMA_COUNT;
         count = MAX_DMA_COUNT;
@@ -509,32 +518,60 @@ bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count, EventRespo
         _dma_count_remaining = 0;
     }
 
-    // Now See if caller passed in a source buffer.
+    // Now see if caller passed in a source buffer.
     uint8_t *write_data = (uint8_t *)buf;
     if (buf) {
-        _dmaTX->sourceBuffer((uint8_t *)write_data, count);
+        switch (width)
+        {
+            // default to bytes
+            default: _dmaTX->sourceBuffer((uint8_t *)  write_data, count); break; 
+            case  2: _dmaTX->sourceBuffer((uint16_t *) write_data, count); break; 
+            case  4: _dmaTX->sourceBuffer((uint32_t *) write_data, count); break; 
+        }
         _dmaTX->TCD->SLAST = 0; // Finish with it pointing to next location
         if ((uint32_t)write_data >= 0x20200000u)
             arm_dcache_flush(write_data, count);
     } else {
-        _dmaTX->source((uint8_t &)_transferWriteFill); // maybe have setable value
+        // maybe have settable value
+        switch (width)
+        {
+            default: _dmaTX->source((uint8_t &)  _transferWriteFill.u8); break;
+            case  2: _dmaTX->source((uint16_t &) _transferWriteFill.u16); break;
+            case  4: _dmaTX->source((uint32_t &) _transferWriteFill.u32); break;
+        }
         _dmaTX->transferCount(count);
     }
-    _dmaTX->transferSize(_nTransferBytes);
+    _dmaTX->transferSize(width);
 
     if (retbuf) {
         // On T3.5 must handle SPI1/2 differently as only one DMA channel
-        _dmaRX->destinationBuffer((uint8_t *)retbuf, count);
+        switch (width)
+        {
+            // default to bytes
+            default: _dmaRX->destinationBuffer((uint8_t *)  retbuf, count); break; 
+            case  2: _dmaRX->destinationBuffer((uint16_t *) retbuf, count); break; 
+            case  4: _dmaRX->destinationBuffer((uint32_t *) retbuf, count); break; 
+        }
         _dmaRX->TCD->DLASTSGA = 0; // At end point after our bufffer
         if ((uint32_t)retbuf >= 0x20200000u)
             arm_dcache_delete(retbuf, count);
     } else {
         // Write  only mode
-        _dmaRX->destination((uint8_t &)bit_bucket);
+        switch (width)
+        {
+            default: _dmaRX->destination(bit_bucket.u8);  break;
+            case  2: _dmaRX->destination(bit_bucket.u16); break;
+            case  4: _dmaRX->destination(bit_bucket.u32); break;
+        }
         _dmaRX->transferCount(count);
     }
-    _dmaRX->transferSize(_nTransferBytes);
-
+    _dmaRX->transferSize(width);
+    /*
+    _nTransferBits = width*8;
+    _pflex->port().TIMCMP[_timer] = (_pflex->port().TIMCMP[_timer] & 0xFFFF00FF)
+                                  | ((_nTransferBits * 2 - 1) << 8);
+    //*/                                  
+Serial.printf("width: %d; TIMCMP: %04X; ", width, _pflex->port().TIMCMP[_timer],HEX);
     _dma_event_responder = &event_responder;
     // Now try to start it?
     // Setup DMA main object

@@ -91,19 +91,28 @@ class FlexIOSPI : public FlexIOHandlerCallback {
     void getShiftBufferIn(void *retbuf, uint8_t nbits, size_t dtype_size);
 
     void inline transfer(void *buf, size_t count) { transfer(buf, buf, count); }
-    void setTransferWriteFill(uint8_t ch) { _transferWriteFill = ch; }
+    void setTransferWriteFill(uint8_t ch) { _transferWriteFill.u8 = ch; }
     void transfer(const void *buf, void *retbuf, size_t count) { transferBufferNBits(buf, retbuf, count, 0); } // 0 on nbits implies use object state
     void transferBufferNBits(const void *buf, void *retbuf, size_t count, uint8_t nbits);
 
     // Asynch support (DMA )
-    bool transfer(const void *txBuffer, void *rxBuffer, size_t count, EventResponderRef event_responder);
-
+    bool transfer(const void *txBuffer, void *rxBuffer, size_t count, EventResponderRef event_responder)
+        { return transfer(txBuffer, rxBuffer, count, 8, event_responder); }
+    bool transfer16(const void *txBuffer, void *rxBuffer, size_t count, EventResponderRef event_responder)
+        { return transfer(txBuffer, rxBuffer, count, 16, event_responder); }
+    bool transfer32(const void *txBuffer, void *rxBuffer, size_t count, EventResponderRef event_responder)
+        { return transfer(txBuffer, rxBuffer, count, 32, event_responder); }
+    
     static void _dma_rxISR0(void);
     static void _dma_rxISR1(void);
     inline void dma_rxisr(void);
 
     void beginTransaction(FlexIOSPISettings settings);
     void endTransaction(void);
+    uint32_t getSCKrate(void) // return actual SCK speed
+    {
+      return _pflex->computeClockRate() / 2 / ((_pflex->port().TIMCMP[_timer] & 0xFF) + 1);
+    }
 
     // have ability to retrieve the FLEXIO object
     FlexIOHandler *flexIOHandler() { return _pflex; }
@@ -111,13 +120,21 @@ class FlexIOSPI : public FlexIOHandlerCallback {
     // Call back from flexIO when ISR hapens
     virtual bool call_back(FlexIOHandler *pflex);
 
+    union bitBucket
+    {
+      uint8_t u8;
+      uint16_t u16;
+      uint32_t u32;
+    }; 
+
   private:
     int _mosiPin;
     int _sckPin;
     int _misoPin;
     int _csPin;
 
-    uint8_t _transferWriteFill = 0;
+    bitBucket _transferWriteFill{0}; // dummy send data
+    bitBucket bit_bucket;
     uint8_t _in_transaction_flag = 0;
 
     uint32_t _clock = 0;
@@ -142,6 +159,8 @@ class FlexIOSPI : public FlexIOHandlerCallback {
 
     // DMA - Async support
     bool initDMAChannels();
+    bool transfer(const void *txBuffer, void *rxBuffer, size_t count, int width,
+                  EventResponderRef event_responder);
     enum DMAState { notAllocated,
                     idle,
                     active,
