@@ -227,10 +227,7 @@ void FlexIOSPI::beginTransaction(FlexIOSPISettings settings) {
     if ((settings._clock != _clock) || (settings._dataMode != _dataMode) || (settings._nTransferBits != _nTransferBits)) {
         _clock = settings._clock;
         _dataMode = settings._dataMode;
-        _nTransferBits = settings._nTransferBits; // Probably should have some safety checking to keep this in the 1-32 range for now.
-        _nTransferBytes = (_nTransferBits - 1) / 8 + 1;
-        if (_nTransferBytes == 3)
-            _nTransferBytes = 4;                               // DMA doesn't handle arbitrary pointer shifts so force 32bit alignment even though it would fit into 24bits.
+        setTransferSize(settings._nTransferBits); // Probably should have some safety checking to keep this in the 1-32 range for now.
         uint32_t clock_speed = _pflex->computeClockRate() / 2; // get speed divide by
         uint32_t div = clock_speed / _clock;
         if (div) {
@@ -562,18 +559,18 @@ bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count,
         {
             default: _dmaRX->destination(bit_bucket.u8);  break;
             case  2: _dmaRX->destination(bit_bucket.u16); break;
-            //case  4: _dmaRX->destination(bit_bucket.u32); break;
+            case  4: _dmaRX->destination(bit_bucket.u32); break;
         }
         _dmaRX->transferCount(count);
     }
     _dmaRX->transferSize(width);
-    //*
-    // Duplicate code from beginTransmission()
-    _nTransferBits = width*8;
+
+    // Duplicate code from beginTransmission() to get 
+    // bit count correct within a transaction
+    setTransferSize(width*8);
     _pflex->port().TIMCMP[_timer] = (_pflex->port().TIMCMP[_timer] & 0xFFFF00FF)
                                   | ((_nTransferBits * 2 - 1) << 8);
-    //*/                                  
-Serial.printf("width: %d; TIMCMP: %04X; ", width, _pflex->port().TIMCMP[_timer],HEX);
+
     _dma_event_responder = &event_responder;
     // Now try to start it?
     // Setup DMA main object

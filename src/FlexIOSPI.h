@@ -134,7 +134,7 @@ class FlexIOSPI : public FlexIOHandlerCallback {
     int _csPin;
 
     bitBucket _transferWriteFill{0}; // dummy send data
-    bitBucket bit_bucket;
+    bitBucket bit_bucket; // somewhere to dump received data
     uint8_t _in_transaction_flag = 0;
 
     uint32_t _clock = 0;
@@ -142,6 +142,13 @@ class FlexIOSPI : public FlexIOHandlerCallback {
     uint8_t _dataMode = SPI_MODE0;
     uint8_t _nTransferBits = DEFAULT_TRANSFER_BITS;
     uint8_t _nTransferBytes = DEFAULT_TRANSFER_BYTES; // Calculated during beginTransaction from _nTransferBits, used for DMA transfers
+    void setTransferSize(uint8_t nTransBits)
+    {
+      _nTransferBits = nTransBits; // Probably should have some safety checking to keep this in the 1-32 range for now.
+      _nTransferBytes = (_nTransferBits - 1) / 8 + 1;
+      if (_nTransferBytes == 3)
+          _nTransferBytes = 4;       
+    }
     volatile uint32_t *_shiftBufInReg = nullptr;
     volatile uint32_t *_shiftBufOutReg = nullptr;
 
