@@ -495,8 +495,9 @@ bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count,
     if (_dma_state == DMAState::active)
         return false; // already active
 
-    event_responder.clearEvent(); // Make sure it is not set yet
-    if (width > 4) width /= 8; // force width to bytes
+    event_responder.clearEvent();   // Make sure it is not triggered yet
+    if (width > 4) width /= 8;      // force width to bytes
+    unsigned int len = count*width; // DMAchannel uses buffer length, not count
 
     if (count < 2) {
         // Use non-async version to simplify cases...
@@ -524,9 +525,9 @@ bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count,
         switch (width)
         {
             // default to bytes
-            default: _dmaTX->sourceBuffer((uint8_t *)  write_data, count); break; 
-            case  2: _dmaTX->sourceBuffer((uint16_t *) write_data, count); break; 
-            case  4: _dmaTX->sourceBuffer((uint32_t *) write_data, count); break; 
+            default: _dmaTX->sourceBuffer((uint8_t *)  write_data, len); break; 
+            case  2: _dmaTX->sourceBuffer((uint16_t *) write_data, len); break; 
+            case  4: _dmaTX->sourceBuffer((uint32_t *) write_data, len); break; 
         }
         _dmaTX->TCD->SLAST = 0; // Finish with it pointing to next location
         if ((uint32_t)write_data >= 0x20200000u)
@@ -548,9 +549,9 @@ bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count,
         switch (width)
         {
             // default to bytes
-            default: _dmaRX->destinationBuffer((uint8_t *)  retbuf, count); break; 
-            case  2: _dmaRX->destinationBuffer((uint16_t *) retbuf, count); break; 
-            case  4: _dmaRX->destinationBuffer((uint32_t *) retbuf, count); break; 
+            default: _dmaRX->destinationBuffer((uint8_t *)  retbuf, len); break; 
+            case  2: _dmaRX->destinationBuffer((uint16_t *) retbuf, len); break; 
+            case  4: _dmaRX->destinationBuffer((uint32_t *) retbuf, len); break; 
         }
         _dmaRX->TCD->DLASTSGA = 0; // At end point after our bufffer
         if ((uint32_t)retbuf >= 0x20200000u)
@@ -561,12 +562,13 @@ bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count,
         {
             default: _dmaRX->destination(bit_bucket.u8);  break;
             case  2: _dmaRX->destination(bit_bucket.u16); break;
-            case  4: _dmaRX->destination(bit_bucket.u32); break;
+            //case  4: _dmaRX->destination(bit_bucket.u32); break;
         }
         _dmaRX->transferCount(count);
     }
     _dmaRX->transferSize(width);
-    /*
+    //*
+    // Duplicate code from beginTransmission()
     _nTransferBits = width*8;
     _pflex->port().TIMCMP[_timer] = (_pflex->port().TIMCMP[_timer] & 0xFFFF00FF)
                                   | ((_nTransferBits * 2 - 1) << 8);
