@@ -625,7 +625,7 @@ void FlexIOSPI::dma_rxisr(void) {
 
         _pflex->port().SHIFTSDEN &= ~(_rx_shifter_mask | _tx_shifter_mask); // turn off DMA on both RX and TX
         _dma_state = DMAState::completed;                                   // set back to 1 in case our call wants to start up dma again
-        _dma_event_responder->triggerEvent();
+        _dma_event_responder->triggerEvent(eventStatus, eventData);
         if (nullptr != _callback)
             _callback(this);
     }

@@ -110,6 +110,8 @@ class FlexIOSPI : public FlexIOHandlerCallback {
     void beginTransaction(FlexIOSPISettings settings);
     void endTransaction(void);
     void setTransferCallback(void (*cb)(FlexIOSPI*)) { _callback = cb; }
+    void setEventStatus(int n) { eventStatus = n; }
+    void setEventData(void* p) { eventData = p; }
 
     uint32_t getSCKrate(void) // return actual SCK speed
     {
@@ -181,6 +183,8 @@ class FlexIOSPI : public FlexIOHandlerCallback {
     DMAChannel *_dmaRX = nullptr;
     EventResponder *_dma_event_responder = nullptr;
     void (*_callback)(FlexIOSPI* instance) = nullptr;
+    int eventStatus = 0;
+    void *eventData = nullptr;
     static FlexIOSPI *_dmaActiveObjects[FlexIOHandler::CNT_FLEX_IO_OBJECT];
 };
 #endif //_FLEX_SPI_H_
