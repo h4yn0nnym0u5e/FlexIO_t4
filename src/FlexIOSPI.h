@@ -91,7 +91,7 @@ class FlexIOSPI : public FlexIOHandlerCallback {
     void getShiftBufferIn(void *retbuf, uint8_t nbits, size_t dtype_size);
 
     void inline transfer(void *buf, size_t count) { transfer(buf, buf, count); }
-    void setTransferWriteFill(uint8_t ch) { _transferWriteFill.u8 = ch; }
+    void setTransferWriteFill(uint8_t ch) { _transferWriteFill.u32 = ch * 0x01010101; }
     void transfer(const void *buf, void *retbuf, size_t count) { transferBufferNBits(buf, retbuf, count, 0); } // 0 on nbits implies use object state
     void transferBufferNBits(const void *buf, void *retbuf, size_t count, uint8_t nbits);
 

@@ -11,193 +11,211 @@ FlexIOSPI *FlexIOSPI::_dmaActiveObjects[FlexIOHandler::CNT_FLEX_IO_OBJECT] = {nu
 // FlexIOSPI::Begin
 //=============================================================================
 bool FlexIOSPI::begin() {
-    // BUGBUG - may need to actual Clocks to computer baud...
-    //	uint16_t baud_div =  (FLEXIO1_CLOCK/baud)/2 - 1;
-    //-------------------------------------------------------------------------
-    // Make sure all of the IO pins are valid flex pins on same controller
-    //-------------------------------------------------------------------------
-    _pflex = FlexIOHandler::mapIOPinToFlexIOHandler(_mosiPin, _mosi_flex_pin);
-    if (!_pflex) {
-#ifdef DEBUG_FlexSPI
-        Serial.printf("FlexIOSPI - Mosi pin does not map to flex controller\n");
-#endif
-        return false;
-    }
-    // Serial.printf("FlexIOSPI Begin: Mosi map %d %x %d\n", _mosiPin, (uint32_t)_pflex, _mosi_flex_pin);
-    //  Lets try mapping the others to this one.
-    _sck_flex_pin = _pflex->mapIOPinToFlexPin(_sckPin);
-    _miso_flex_pin = _pflex->mapIOPinToFlexPin(_misoPin);
+    bool result = false;
 
-    // Lets see if they all mapped to same to same controller.
-    if ((_sck_flex_pin == 0xff) || (_miso_flex_pin == 0xff)) {
-#if defined(__IMXRT1062__)
-        // Note this par
-        if (_sck_flex_pin == 0xff) {
-            _pflex = FlexIOHandler::mapIOPinToFlexIOHandler(_sck_flex_pin, _sck_flex_pin);
-        } else {
-            _pflex = FlexIOHandler::mapIOPinToFlexIOHandler(_miso_flex_pin, _miso_flex_pin);
+    // series of operations, any one of which could fail
+    // avoid early returns by using do {} while (0);
+    do
+    {
+        //Serial.print(" FlexIOSPI begin ");
+        if (nullptr != _pflex) // begin done already, don't repeat
+        {
+            //Serial.println("repeated");
+            result = true; // it's OK, though
+            break; //==========================================
         }
+        // BUGBUG - may need to actual Clocks to computer baud...
+        //	uint16_t baud_div =  (FLEXIO1_CLOCK/baud)/2 - 1;
+        //-------------------------------------------------------------------------
+        // Make sure all of the IO pins are valid flex pins on same controller
+        //-------------------------------------------------------------------------
+        _pflex = FlexIOHandler::mapIOPinToFlexIOHandler(_mosiPin, _mosi_flex_pin);
         if (!_pflex) {
-#ifdef DEBUG_FlexSPI
-            Serial.printf("FlexIOSPI - not all pins mapped to same Flex controller\n");
-#endif
-            return false;
+     #ifdef DEBUG_FlexSPI
+            Serial.printf("FlexIOSPI - Mosi pin does not map to flex controller\n");
+     #endif
+            break; //==========================================
         }
 
-        _mosi_flex_pin = _pflex->mapIOPinToFlexPin(_mosiPin);
+        // Serial.printf("FlexIOSPI Begin: Mosi map %d %x %d\n", _mosiPin, (uint32_t)_pflex, _mosi_flex_pin);
+        //  Lets try mapping the others to this one.
         _sck_flex_pin = _pflex->mapIOPinToFlexPin(_sckPin);
         _miso_flex_pin = _pflex->mapIOPinToFlexPin(_misoPin);
-        if ((_sck_flex_pin == 0xff) || (_miso_flex_pin == 0xff) || (_mosi_flex_pin == 0xff)) {
-#ifdef DEBUG_FlexSPI
+
+        // Lets see if they all mapped to same to same controller.
+        if ((_sck_flex_pin == 0xff) || (_miso_flex_pin == 0xff)) {
+     #if defined(__IMXRT1062__)
+            // Note this par
+            if (_sck_flex_pin == 0xff) {
+                _pflex = FlexIOHandler::mapIOPinToFlexIOHandler(_sck_flex_pin, _sck_flex_pin);
+            } else {
+                _pflex = FlexIOHandler::mapIOPinToFlexIOHandler(_miso_flex_pin, _miso_flex_pin);
+            }
+            if (!_pflex) {
+     #ifdef DEBUG_FlexSPI
+                Serial.printf("FlexIOSPI - not all pins mapped to same Flex controller\n");
+     #endif
+                break; //==========================================
+            }
+
+            _mosi_flex_pin = _pflex->mapIOPinToFlexPin(_mosiPin);
+            _sck_flex_pin = _pflex->mapIOPinToFlexPin(_sckPin);
+            _miso_flex_pin = _pflex->mapIOPinToFlexPin(_misoPin);
+            if ((_sck_flex_pin == 0xff) || (_miso_flex_pin == 0xff) || (_mosi_flex_pin == 0xff)) {
+     #ifdef DEBUG_FlexSPI
+                Serial.printf("FlexIOSPI - not all pins mapped to same Flex controller\n");
+     #endif
+                break; //==========================================
+            }
+     #else
+            // 1052 don't have pins that map to different FLEXIO controllers
+     #ifdef DEBUG_FlexSPI
             Serial.printf("FlexIOSPI - not all pins mapped to same Flex controller\n");
-#endif
-            return false;
+     #endif
+            break; //==========================================
+     #endif
         }
-#else
-        // 1052 don't have pins that map to different FLEXIO controllers
-#ifdef DEBUG_FlexSPI
-        Serial.printf("FlexIOSPI - not all pins mapped to same Flex controller\n");
-#endif
-        return false;
-#endif
-    }
-    // FlexIOHandler *cs_flex = _pflex;
-    if (_csPin != -1) {
-        _cs_flex_pin = _pflex->mapIOPinToFlexPin(_csPin);
-        if (_cs_flex_pin == 0xff) {
-#ifdef DEBUG_FlexSPI
-            Serial.printf("FlexIOSPI - not all pins(CS) mapped to same Flex controller\n");
-#endif
-            return false;
+        // FlexIOHandler *cs_flex = _pflex;
+        if (_csPin != -1) {
+            _cs_flex_pin = _pflex->mapIOPinToFlexPin(_csPin);
+            if (_cs_flex_pin == 0xff) {
+     #ifdef DEBUG_FlexSPI
+                Serial.printf("FlexIOSPI - not all pins(CS) mapped to same Flex controller\n");
+     #endif
+                break; //==========================================
+            }
         }
-    }
 
-    // Now reserve timers and shifters
-    IMXRT_FLEXIO_t *p = &_pflex->port();
+        // Now reserve timers and shifters
+        IMXRT_FLEXIO_t *p = &_pflex->port();
 
-    _timer = _pflex->requestTimers((_csPin != -1) ? 2 : 1);
-    _tx_shifter = _pflex->requestShifter();
-    _rx_shifter = _pflex->requestShifter(_pflex->shiftersDMAChannel(_tx_shifter));
+        _timer = _pflex->requestTimers((_csPin != -1) ? 2 : 1);
+        _tx_shifter = _pflex->requestShifter();
+        _rx_shifter = _pflex->requestShifter(_pflex->shiftersDMAChannel(_tx_shifter));
 
-    // If first request failed to get second different shifter on different dma channel, allocate other one on same channel
-    // but DMA will not work...
-    if (_rx_shifter == 0xff)
-        _rx_shifter = _pflex->requestShifter();
+        // If first request failed to get second different shifter on different dma channel, allocate other one on same channel
+        // but DMA will not work...
+        if (_rx_shifter == 0xff)
+            _rx_shifter = _pflex->requestShifter();
 
-    if ((_timer == 0xff) || (_tx_shifter == 0xff) || (_rx_shifter == 0xff)) {
-        _pflex->freeTimers(_timer, (_csPin != -1) ? 2 : 1);
-        _timer = 0xff;
-        _pflex->freeShifter(_tx_shifter);
-        _pflex->freeShifter(_rx_shifter);
-        _tx_shifter = 0xff;
-        _rx_shifter = 0xff;
-#ifdef DEBUG_FlexSPI
-        Serial.println("FlexIOSPI - Failed to allocate timers or shifters");
-#endif
-        return false;
-    }
+        if ((_timer == 0xff) || (_tx_shifter == 0xff) || (_rx_shifter == 0xff)) {
+            _pflex->freeTimers(_timer, (_csPin != -1) ? 2 : 1);
+            _timer = 0xff;
+            _pflex->freeShifter(_tx_shifter);
+            _pflex->freeShifter(_rx_shifter);
+            _tx_shifter = 0xff;
+            _rx_shifter = 0xff;
+     #ifdef DEBUG_FlexSPI
+            Serial.println("FlexIOSPI - Failed to allocate timers or shifters");
+     #endif
+            break; //==========================================
+        }
 
-    _tx_shifter_mask = 1;
-    for (uint8_t i = _tx_shifter; i > 0; i--)
-        _tx_shifter_mask <<= 1;
-    _rx_shifter_mask = 1;
-    for (uint8_t i = _rx_shifter; i > 0; i--)
-        _rx_shifter_mask <<= 1;
+        _tx_shifter_mask = 1;
+        for (uint8_t i = _tx_shifter; i > 0; i--)
+            _tx_shifter_mask <<= 1;
+        _rx_shifter_mask = 1;
+        for (uint8_t i = _rx_shifter; i > 0; i--)
+            _rx_shifter_mask <<= 1;
 
-#ifdef DEBUG_FlexSPI
-    DEBUG_FlexSPI.printf("timer index: %d shifter index: %d mask: %x\n", _timer, _tx_shifter, _tx_shifter_mask);
-    // lets try to configure a tranmitter like example
-    DEBUG_FlexSPI.println("Before configure flexio");
-#endif
-    p->SHIFTCFG[_tx_shifter] = 0; // Start/stop disabled;
+     #ifdef DEBUG_FlexSPI
+        DEBUG_FlexSPI.printf("timer index: %d shifter index: %d mask: %x\n", _timer, _tx_shifter, _tx_shifter_mask);
+        // lets try to configure a tranmitter like example
+        DEBUG_FlexSPI.println("Before configure flexio");
+     #endif
+        p->SHIFTCFG[_tx_shifter] = 0; // Start/stop disabled;
 
-    p->SHIFTCTL[_tx_shifter] = FLEXIO_SHIFTCTL_MODE_TRANSMIT |
-                               FLEXIO_SHIFTCTL_SHIFT_ON_FALLING_EDGE |
-                               FLEXIO_SHIFTCTL_PINMODE_OUTPUT |
-                               FLEXIO_SHIFTCTL_TIMSEL(_timer) |
-                               FLEXIO_SHIFTCTL_PINSEL(_mosi_flex_pin); // 0x0003_0002
-    p->SHIFTCFG[_rx_shifter] = 0;                                      // Start/stop disabled;
-    p->SHIFTCTL[_rx_shifter] = FLEXIO_SHIFTCTL_MODE_RECEIVE |
-                               FLEXIO_SHIFTCTL_SHIFT_ON_RISING_EDGE |
-                               FLEXIO_SHIFTCTL_PINMODE_INPUT |
-                               FLEXIO_SHIFTCTL_TIMSEL(_timer) |
-                               FLEXIO_SHIFTCTL_PINSEL(_miso_flex_pin); // 0x0003_0002
-    p->TIMCMP[_timer] = 0x0f01;                                        // (8 bits?)0x3f01; // ???0xf00 | baud_div; //0xF01; //0x0000_0F01;		//
-    p->TIMCTL[_timer] = FLEXIO_TIMCTL_MODE_8BIT_BAUD |
-                        FLEXIO_TIMCTL_TRIGGER_SHIFTER(0) |
-                        FLEXIO_TIMCTL_TRIGGER_ACTIVE_LOW |
-                        FLEXIO_TIMCTL_PINMODE_OUTPUT |
-                        FLEXIO_TIMCTL_PINSEL(_sck_flex_pin); // 0x01C0_0001
-    if (_csPin != -1) {
-        p->TIMCFG[_timer] = FLEXIO_TIMCFG_DEC_ON_CLOCK_SHIFT_ON_OUTPUT |
-                            FLEXIO_TIMCFG_OUTPUT_LOW_WHEN_ENABLED |
-                            FLEXIO_TIMCFG_RESET_NEVER |
-                            FLEXIO_TIMCFG_DISABLE_ON_8BIT_MATCH |
-                            FLEXIO_TIMCFG_ENABLE_WHEN_TRIGGER_HIGH |
-                            FLEXIO_TIMCFG_STOPBIT_ENABLE_ON_TIMER_DISABLE |
-                            FLEXIO_TIMCFG_STARTBIT_ENABLED; // 0x0100_2222
+        p->SHIFTCTL[_tx_shifter] = FLEXIO_SHIFTCTL_MODE_TRANSMIT |
+                                FLEXIO_SHIFTCTL_SHIFT_ON_FALLING_EDGE |
+                                FLEXIO_SHIFTCTL_PINMODE_OUTPUT |
+                                FLEXIO_SHIFTCTL_TIMSEL(_timer) |
+                                FLEXIO_SHIFTCTL_PINSEL(_mosi_flex_pin); // 0x0003_0002
+        p->SHIFTCFG[_rx_shifter] = 0;                                      // Start/stop disabled;
+        p->SHIFTCTL[_rx_shifter] = FLEXIO_SHIFTCTL_MODE_RECEIVE |
+                                FLEXIO_SHIFTCTL_SHIFT_ON_RISING_EDGE |
+                                FLEXIO_SHIFTCTL_PINMODE_INPUT |
+                                FLEXIO_SHIFTCTL_TIMSEL(_timer) |
+                                FLEXIO_SHIFTCTL_PINSEL(_miso_flex_pin); // 0x0003_0002
+        p->TIMCMP[_timer] = 0x0f01;                                        // (8 bits?)0x3f01; // ???0xf00 | baud_div; //0xF01; //0x0000_0F01;		//
+        p->TIMCTL[_timer] = FLEXIO_TIMCTL_MODE_8BIT_BAUD |
+                            FLEXIO_TIMCTL_TRIGGER_SHIFTER(0) |
+                            FLEXIO_TIMCTL_TRIGGER_ACTIVE_LOW |
+                            FLEXIO_TIMCTL_PINMODE_OUTPUT |
+                            FLEXIO_TIMCTL_PINSEL(_sck_flex_pin); // 0x01C0_0001
+        if (_csPin != -1) {
+            p->TIMCFG[_timer] = FLEXIO_TIMCFG_DEC_ON_CLOCK_SHIFT_ON_OUTPUT |
+                                FLEXIO_TIMCFG_OUTPUT_LOW_WHEN_ENABLED |
+                                FLEXIO_TIMCFG_RESET_NEVER |
+                                FLEXIO_TIMCFG_DISABLE_ON_8BIT_MATCH |
+                                FLEXIO_TIMCFG_ENABLE_WHEN_TRIGGER_HIGH |
+                                FLEXIO_TIMCFG_STOPBIT_ENABLE_ON_TIMER_DISABLE |
+                                FLEXIO_TIMCFG_STARTBIT_ENABLED; // 0x0100_2222
 
-        p->TIMCMP[_timer + 1] = 0xffff; // never compare
-        p->TIMCFG[_timer + 1] = FLEXIO_TIMCFG_DISABLE_WHEN_PRIOR_TIMER_DISABLES |
-                                FLEXIO_TIMCFG_ENABLE_WHEN_PRIOR_TIMER_ENABLES; // 0x0000_1100
-        p->TIMCTL[_timer + 1] = FLEXIO_TIMCTL_MODE_16BIT |
-                                FLEXIO_TIMCTL_PINMODE_OUTPUT |
-                                FLEXIO_TIMCTL_PIN_ACTIVE_LOW |
-                                FLEXIO_TIMCTL_PINSEL(_cs_flex_pin); // 0003_0383
-    } else {
-        p->TIMCFG[_timer] = FLEXIO_TIMCFG_DEC_ON_CLOCK_SHIFT_ON_OUTPUT |
-                            FLEXIO_TIMCFG_OUTPUT_LOW_WHEN_ENABLED |
-                            FLEXIO_TIMCFG_DISABLE_ON_8BIT_MATCH |
-                            FLEXIO_TIMCFG_ENABLE_WHEN_TRIGGER_HIGH;
-    }
+            p->TIMCMP[_timer + 1] = 0xffff; // never compare
+            p->TIMCFG[_timer + 1] = FLEXIO_TIMCFG_DISABLE_WHEN_PRIOR_TIMER_DISABLES |
+                                    FLEXIO_TIMCFG_ENABLE_WHEN_PRIOR_TIMER_ENABLES; // 0x0000_1100
+            p->TIMCTL[_timer + 1] = FLEXIO_TIMCTL_MODE_16BIT |
+                                    FLEXIO_TIMCTL_PINMODE_OUTPUT |
+                                    FLEXIO_TIMCTL_PIN_ACTIVE_LOW |
+                                    FLEXIO_TIMCTL_PINSEL(_cs_flex_pin); // 0003_0383
+        } else {
+            p->TIMCFG[_timer] = FLEXIO_TIMCFG_DEC_ON_CLOCK_SHIFT_ON_OUTPUT |
+                                FLEXIO_TIMCFG_OUTPUT_LOW_WHEN_ENABLED |
+                                FLEXIO_TIMCFG_DISABLE_ON_8BIT_MATCH |
+                                FLEXIO_TIMCFG_ENABLE_WHEN_TRIGGER_HIGH;
+        }
 
-    // Make sure this flex IO object is enabled
-    p->CTRL = FLEXIO_CTRL_FLEXEN;
-    // p->SHIFTSTAT = _tx_shifter_mask;   // Clear out the status.
+        // Make sure this flex IO object is enabled
+        p->CTRL = FLEXIO_CTRL_FLEXEN;
+        // p->SHIFTSTAT = _tx_shifter_mask;   // Clear out the status.
 
-    // Set the IO pins into FLEXIO mode
-    _pflex->setIOPinToFlexMode(_mosiPin);
-    _pflex->setIOPinToFlexMode(_sckPin);
-    _pflex->setIOPinToFlexMode(_misoPin);
-    // Wonder if we should cofigure the port config registers like SPI does?
-    uint32_t fastio = IOMUXC_PAD_DSE(7) | IOMUXC_PAD_SPEED(2);
-    // uint32_t fastio = IOMUXC_PAD_DSE(6) | IOMUXC_PAD_SPEED(1);
-    // uint32_t fastio = IOMUXC_PAD_DSE(3) | IOMUXC_PAD_SPEED(3);
-    // Serial.printf("SPI MISO: %d MOSI: %d, SCK: %d\n", hardware().miso_pin[miso_pin_index], hardware().mosi_pin[mosi_pin_index], hardware().sck_pin[sck_pin_index]);
-    *(portControlRegister(_mosiPin)) = fastio;
-    *(portControlRegister(_sckPin)) = fastio;
-    *(portControlRegister(_misoPin)) = fastio | IOMUXC_PAD_PUE | IOMUXC_PAD_PUS(3); // maybe add our own internal PU?
+        // Set the IO pins into FLEXIO mode
+        _pflex->setIOPinToFlexMode(_mosiPin);
+        _pflex->setIOPinToFlexMode(_sckPin);
+        _pflex->setIOPinToFlexMode(_misoPin);
+        // Wonder if we should cofigure the port config registers like SPI does?
+        uint32_t fastio = IOMUXC_PAD_DSE(7) | IOMUXC_PAD_SPEED(2);
+        // uint32_t fastio = IOMUXC_PAD_DSE(6) | IOMUXC_PAD_SPEED(1);
+        // uint32_t fastio = IOMUXC_PAD_DSE(3) | IOMUXC_PAD_SPEED(3);
+        // Serial.printf("SPI MISO: %d MOSI: %d, SCK: %d\n", hardware().miso_pin[miso_pin_index], hardware().mosi_pin[mosi_pin_index], hardware().sck_pin[sck_pin_index]);
+        *(portControlRegister(_mosiPin)) = fastio;
+        *(portControlRegister(_sckPin)) = fastio;
+        *(portControlRegister(_misoPin)) = fastio | IOMUXC_PAD_PUE | IOMUXC_PAD_PUS(3); // maybe add our own internal PU?
 
-    if (_csPin != -1)
-        _pflex->setIOPinToFlexMode(_csPin);
+        if (_csPin != -1)
+            _pflex->setIOPinToFlexMode(_csPin);
 
-    _pflex->addIOHandlerCallback(this);
+        _pflex->addIOHandlerCallback(this);
 
-    // precompute the shift registers depending on MSB or LSB first...
-    _bitOrder = MSBFIRST;
-    _shiftBufOutReg = &_pflex->port().SHIFTBUFBBS[_tx_shifter];
-    _shiftBufInReg = &_pflex->port().SHIFTBUFBIS[_rx_shifter];
-    ;
+        // precompute the shift registers depending on MSB or LSB first...
+        _bitOrder = MSBFIRST;
+        _shiftBufOutReg = &_pflex->port().SHIFTBUFBBS[_tx_shifter];
+        _shiftBufInReg = &_pflex->port().SHIFTBUFBIS[_rx_shifter];
 
-    // Lets print out some of the settings and the like to get idea of state
-#ifdef DEBUG_FlexSPI
-    DEBUG_FlexSPI.printf("Mosi map: %d %x %d\n", _mosiPin, (uint32_t)_pflex, _mosi_flex_pin);
-    DEBUG_FlexSPI.printf("Miso map: %d %d\n", _misoPin, _miso_flex_pin);
-    DEBUG_FlexSPI.printf("Sck map: %d %d\n", _sckPin, _sck_flex_pin);
-    DEBUG_FlexSPI.printf("CCM_CDCDR: %x\n", CCM_CDCDR);
-    DEBUG_FlexSPI.printf("FlexIO bus speed: %d\n", _pflex->computeClockRate());
-    DEBUG_FlexSPI.printf("VERID:%x PARAM:%x CTRL:%x PIN: %x\n", p->PARAM, p->CTRL, p->CTRL, p->PIN);
-    DEBUG_FlexSPI.printf("SHIFTSTAT:%x SHIFTERR=%x TIMSTAT=%x\n", p->SHIFTSTAT, p->SHIFTERR, p->TIMSTAT);
-    DEBUG_FlexSPI.printf("SHIFTSIEN:%x SHIFTEIEN=%x TIMIEN=%x\n", p->SHIFTSIEN, p->SHIFTEIEN, p->TIMIEN);
-    DEBUG_FlexSPI.printf("SHIFTSDEN:%x SHIFTSTATE=%x\n", p->SHIFTSDEN, p->SHIFTSTATE);
-    DEBUG_FlexSPI.printf("SHIFTCTL:%x %x %x %x\n", p->SHIFTCTL[0], p->SHIFTCTL[1], p->SHIFTCTL[2], p->SHIFTCTL[3]);
-    DEBUG_FlexSPI.printf("SHIFTCFG:%x %x %x %x\n", p->SHIFTCFG[0], p->SHIFTCFG[1], p->SHIFTCFG[2], p->SHIFTCFG[3]);
-    DEBUG_FlexSPI.printf("TIMCTL:%x %x %x %x\n", p->TIMCTL[0], p->TIMCTL[1], p->TIMCTL[2], p->TIMCTL[3]);
-    DEBUG_FlexSPI.printf("TIMCFG:%x %x %x %x\n", p->TIMCFG[0], p->TIMCFG[1], p->TIMCFG[2], p->TIMCFG[3]);
-    DEBUG_FlexSPI.printf("TIMCMP:%x %x %x %x\n", p->TIMCMP[0], p->TIMCMP[1], p->TIMCMP[2], p->TIMCMP[3]);
-#endif
+        // Lets print out some of the settings and the like to get idea of state
+     #ifdef DEBUG_FlexSPI
+        DEBUG_FlexSPI.printf("Mosi map: %d %x %d\n", _mosiPin, (uint32_t)_pflex, _mosi_flex_pin);
+        DEBUG_FlexSPI.printf("Miso map: %d %d\n", _misoPin, _miso_flex_pin);
+        DEBUG_FlexSPI.printf("Sck map: %d %d\n", _sckPin, _sck_flex_pin);
+        DEBUG_FlexSPI.printf("CCM_CDCDR: %x\n", CCM_CDCDR);
+        DEBUG_FlexSPI.printf("FlexIO bus speed: %d\n", _pflex->computeClockRate());
+        DEBUG_FlexSPI.printf("VERID:%x PARAM:%x CTRL:%x PIN: %x\n", p->PARAM, p->CTRL, p->CTRL, p->PIN);
+        DEBUG_FlexSPI.printf("SHIFTSTAT:%x SHIFTERR=%x TIMSTAT=%x\n", p->SHIFTSTAT, p->SHIFTERR, p->TIMSTAT);
+        DEBUG_FlexSPI.printf("SHIFTSIEN:%x SHIFTEIEN=%x TIMIEN=%x\n", p->SHIFTSIEN, p->SHIFTEIEN, p->TIMIEN);
+        DEBUG_FlexSPI.printf("SHIFTSDEN:%x SHIFTSTATE=%x\n", p->SHIFTSDEN, p->SHIFTSTATE);
+        DEBUG_FlexSPI.printf("SHIFTCTL:%x %x %x %x\n", p->SHIFTCTL[0], p->SHIFTCTL[1], p->SHIFTCTL[2], p->SHIFTCTL[3]);
+        DEBUG_FlexSPI.printf("SHIFTCFG:%x %x %x %x\n", p->SHIFTCFG[0], p->SHIFTCFG[1], p->SHIFTCFG[2], p->SHIFTCFG[3]);
+        DEBUG_FlexSPI.printf("TIMCTL:%x %x %x %x\n", p->TIMCTL[0], p->TIMCTL[1], p->TIMCTL[2], p->TIMCTL[3]);
+        DEBUG_FlexSPI.printf("TIMCFG:%x %x %x %x\n", p->TIMCFG[0], p->TIMCFG[1], p->TIMCFG[2], p->TIMCFG[3]);
+        DEBUG_FlexSPI.printf("TIMCMP:%x %x %x %x\n", p->TIMCMP[0], p->TIMCMP[1], p->TIMCMP[2], p->TIMCMP[3]);
+     #endif
 
-    return true;
+        //Serial.println("OK");
+        result = true;
+    } while (0);
+
+    if (!result) _pflex = nullptr; // flag not working
+    return result;
 }
 
 void FlexIOSPI::end(void) {
@@ -275,22 +293,26 @@ void FlexIOSPI::setShiftBufferOut(uint32_t val, uint8_t nbits) {
 }
 
 void FlexIOSPI::setShiftBufferOut(const void *buf, uint8_t nbits, size_t dtype_size) {
-    uint32_t val = 0;
-    switch (dtype_size) {
-    case 1:
-        val = *(uint8_t *)buf;
-        break;
-    case 2:
-        val = *(uint16_t *)buf;
-        break;
-    case 3:
-        val = (*(uint32_t *)buf) & 0xffffff;
-        break;
-    case 4:
-        val = *(uint32_t *)buf;
-        break;
-    default:
-        break;
+    uint32_t val = _transferWriteFill.u32;
+
+    if (nullptr != buf)
+    {
+        switch (dtype_size) {
+        case 1:
+            val = *(uint8_t *)buf;
+            break;
+        case 2:
+            val = *(uint16_t *)buf;
+            break;
+        case 3:
+            val = (*(uint32_t *)buf) & 0xffffff;
+            break;
+        case 4:
+            val = *(uint32_t *)buf;
+            break;
+        default:
+            break;
+        }
     }
     setShiftBufferOut(val, nbits);
 }
@@ -306,24 +328,26 @@ uint32_t FlexIOSPI::getShiftBufferIn(uint8_t nbits) {
 }
 
 void FlexIOSPI::getShiftBufferIn(void *retbuf, uint8_t nbits, size_t dtype_size) {
-    uint32_t tmp;
-    switch (dtype_size) {
-    case 1:
-        *(uint8_t *)retbuf = (uint8_t)getShiftBufferIn(nbits);
-        break;
-    case 2:
-        *(uint16_t *)retbuf = (uint16_t)getShiftBufferIn(nbits);
-        break;
-    case 3: // The weird case that gets some shuffling to handle the last chunk without overflowing
-        tmp = getShiftBufferIn(nbits);
-        *(uint16_t *)retbuf = (uint16_t)tmp & 0xffff;           // Lower16 bits
-        *((uint8_t *)retbuf + 2) = (uint8_t)(tmp >> 16) & 0xff; // Upper8 bits
-        break;
-    case 4:
-        *(uint32_t *)retbuf = (uint32_t)getShiftBufferIn(nbits);
-        break;
-    default:
-        break;
+    uint32_t tmp = getShiftBufferIn(nbits);
+    if (nullptr != retbuf)
+    {
+        switch (dtype_size) {
+        case 1:
+            *(uint8_t *)retbuf = (uint8_t) tmp;
+            break;
+        case 2:
+            *(uint16_t *)retbuf = (uint16_t) tmp;
+            break;
+        case 3: // The weird case that gets some shuffling to handle the last chunk without overflowing
+            *(uint16_t *)retbuf = (uint16_t)tmp & 0xffff;           // Lower16 bits
+            *((uint8_t *)retbuf + 2) = (uint8_t)(tmp >> 16) & 0xff; // Upper8 bits
+            break;
+        case 4:
+            *(uint32_t *)retbuf = tmp;
+            break;
+        default:
+            break;
+        }
     }
 }
 
@@ -374,8 +398,8 @@ void FlexIOSPI::transferBufferNBits(const void *buf, void *retbuf, size_t count,
     while (!(_pflex->port().SHIFTSTAT & _tx_shifter_mask))
         ; // wait for room for the first character
 
+    setShiftBufferOut(tx_buffer, nbits, bytestride);
     if (tx_buffer) {
-        setShiftBufferOut(tx_buffer, nbits, bytestride);
         tx_buffer += bytestride;
     }
     tx_count--;
@@ -384,8 +408,8 @@ void FlexIOSPI::transferBufferNBits(const void *buf, void *retbuf, size_t count,
         while (!(_pflex->port().SHIFTSTAT & _tx_shifter_mask))
             ;
 
+        setShiftBufferOut(tx_buffer, nbits, bytestride);
         if (tx_buffer) {
-            setShiftBufferOut(tx_buffer, nbits, bytestride);
             tx_buffer += bytestride;
         }
         tx_count--;
@@ -394,8 +418,8 @@ void FlexIOSPI::transferBufferNBits(const void *buf, void *retbuf, size_t count,
         while (!(_pflex->port().SHIFTSTAT & _rx_shifter_mask))
             ;
 
+        getShiftBufferIn(rx_buffer, nbits, bytestride);
         if (rx_buffer) {
-            getShiftBufferIn(rx_buffer, nbits, bytestride);
             rx_buffer += bytestride;
         }
     }
@@ -403,10 +427,7 @@ void FlexIOSPI::transferBufferNBits(const void *buf, void *retbuf, size_t count,
     while (!(_pflex->port().SHIFTSTAT & _rx_shifter_mask) && !(_pflex->port().SHIFTERR & _rx_shifter_mask))
         ;
 
-    if (rx_buffer) {
-        getShiftBufferIn(rx_buffer, nbits, bytestride);
-        rx_buffer += bytestride;
-    }
+    getShiftBufferIn(rx_buffer, nbits, bytestride);
 }
 
 bool FlexIOSPI::call_back(FlexIOHandler *pflex) {
