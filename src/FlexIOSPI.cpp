@@ -524,7 +524,7 @@ bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count,
             case  2: transferBufferNBits(buf, retbuf, count, 16); break;
             case  4: transferBufferNBits(buf, retbuf, count, 32); break;
         }
-        event_responder.triggerEvent();
+        event_responder.triggerEvent(eventStatus, eventData);
         return true;
     }
 
