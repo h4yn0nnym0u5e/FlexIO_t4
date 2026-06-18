@@ -515,7 +515,6 @@ bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count,
 
     event_responder.clearEvent();   // Make sure it is not triggered yet
     if (width > 4) width /= 8;      // force width to bytes
-    unsigned int len = count*width; // DMAchannel uses buffer length, not count
 
     if (count < 2) {
         // Use non-async version to simplify cases...
@@ -530,12 +529,14 @@ bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count,
     }
 
     // Now handle the cases where the count > than how many we can output in one DMA request
+    size_t original_count = count; // keep this for potential cache flush
     if (count > MAX_DMA_COUNT) {
         _dma_count_remaining = count - MAX_DMA_COUNT;
         count = MAX_DMA_COUNT;
     } else {
         _dma_count_remaining = 0;
     }
+    unsigned int len = count*width; // DMAchannel uses buffer length, not count
 
     // Now see if caller passed in a source buffer.
     uint8_t *write_data = (uint8_t *)buf;
@@ -549,7 +550,7 @@ bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count,
         }
         _dmaTX->TCD->SLAST = 0; // Finish with it pointing to next location
         if ((uint32_t)write_data >= 0x20200000u)
-            arm_dcache_flush(write_data, count);
+            arm_dcache_flush(write_data, original_count * width);
     } else {
         // maybe have settable value
         switch (width)
