@@ -102,6 +102,16 @@ class FlexIOSPI : public FlexIOHandlerCallback {
         { return transfer(txBuffer, rxBuffer, count, 16, event_responder); }
     bool transfer32(const void *txBuffer, void *rxBuffer, size_t count, EventResponderRef event_responder)
         { return transfer(txBuffer, rxBuffer, count, 32, event_responder); }
+    void killTransfer(void) // emergency stop!
+    {
+      _pflex->port().SHIFTSDEN &= ~(_rx_shifter_mask | _tx_shifter_mask); // turn off DMA on both RX and TX
+      _dmaTX->disable();
+      _dmaRX->disable();
+      _dmaRX->clearInterrupt();
+      _dmaTX->clearComplete();
+      _dmaRX->clearComplete();
+      _dma_state = DMAState::idle;
+    }
     
     static void _dma_rxISR0(void);
     static void _dma_rxISR1(void);

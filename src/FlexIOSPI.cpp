@@ -607,6 +607,8 @@ bool FlexIOSPI::transfer(const void *buf, void *retbuf, size_t count,
     // Lets turn on the DMA handling for this
     _pflex->port().SHIFTSDEN |= _rx_shifter_mask | _tx_shifter_mask;
 
+  // digitalWriteFast(8, HIGH);
+    _dmaRX->interruptAtCompletion();
     _dmaRX->enable();
     _dmaTX->enable();
 
@@ -630,17 +632,32 @@ void FlexIOSPI::dma_rxisr(void) {
     _dmaTX->clearComplete();
     _dmaRX->clearComplete();
 
+//digitalWriteFast(8, LOW); // finished (?)
+//delayMicroseconds(10);
+
     if (_dma_count_remaining) {
+        uint32_t dma_next_transfer = _dma_count_remaining;
         // What do I need to do to start it back up again...
         // We will use the BITR/CITR from RX as TX may have prefed some stuff
-        if (_dma_count_remaining > MAX_DMA_COUNT) {
-            _dma_count_remaining -= MAX_DMA_COUNT;
-        } else {
-            _dmaTX->transferCount(_dma_count_remaining);
-            _dmaRX->transferCount(_dma_count_remaining);
+        if (dma_next_transfer > MAX_DMA_COUNT)
+            dma_next_transfer = MAX_DMA_COUNT;
 
-            _dma_count_remaining = 0;
+        // check for (current) next transfer being a bit small, but non-zero
+        // 100 16-bit pixels at 60MHz take 26us
+        const uint32_t threshold = 100;
+        if (_dma_count_remaining > dma_next_transfer
+         && (_dma_count_remaining - dma_next_transfer) < threshold )
+            dma_next_transfer -= threshold;
+        
+        _dma_count_remaining -= dma_next_transfer;
+
+        if (dma_next_transfer != MAX_DMA_COUNT)
+        {
+            _dmaTX->transferCount(dma_next_transfer);
+            _dmaRX->transferCount(dma_next_transfer);
         }
+//  digitalWriteFast(8, HIGH); // restarted
+        _dmaRX->interruptAtCompletion();
         _dmaRX->enable();
         _dmaTX->enable();
     } else {
@@ -650,5 +667,6 @@ void FlexIOSPI::dma_rxisr(void) {
         _dma_event_responder->triggerEvent(eventStatus, eventData);
         if (nullptr != _callback)
             _callback(this);
+
     }
 }
